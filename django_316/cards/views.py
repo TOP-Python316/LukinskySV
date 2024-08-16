@@ -11,10 +11,11 @@ render(запрос, шаблон, контекст=None)
     Возвращает объект HttpResponse с отрендеренным шаблоном шаблон и контекстом контекст.
     Если контекст не передан, используется пустой словарь.
 """
-
+from django.db.models import F
 from django.http import HttpResponse
 from django.shortcuts import render, get_object_or_404
 from .models import Card
+from django.views.decorators.cache import cache_page
 
 """
 Информация в шаблоны будет браться из базы данных
@@ -106,7 +107,7 @@ def about(request):
     будет возвращать рендер шаблона /root/templates/about.html"""
     return render(request, 'about.html', info)
 
-
+@cache_page(60 * 15)
 def catalog(request):
     """Функция для отображения страницы "Каталог"
     будет возвращать рендер шаблона /templates/cards/catalog.html
@@ -131,11 +132,14 @@ def catalog(request):
     else:
         order_by = f'-{sort}'
 
-    cards = Card.objects.all().order_by(order_by)
+    # cards = Card.objects.all().order_by(order_by)
+
+    # Получаем карточки из БД в ЖАДНОМ режиме
+    cards = Card.objects.prefetch_related('tags').order_by(order_by)
 
     context = {
         'cards': cards,
-        'cards_count': cards.count(),
+        'cards_count': len(cards),
         'menu': info['menu'],
     }
 
@@ -157,11 +161,20 @@ def get_cards_by_category(request, slug):
     return HttpResponse(f'Cards by category {slug}')
 
 
-def get_cards_by_tag(request, slug):
+def get_cards_by_tag(request, tag_id):
     """
     Возвращает карточки по тегу для представления в каталоге
     """
-    return HttpResponse(f'Cards by tag {slug}')
+    # добываем карточки из БД по тегу
+    cards = Card.objects.filter(tags__id=tag_id)
+
+    # подготавливаем контекст и отображаем шаблон
+    context = {
+        'cards': cards,
+        'menu': info['menu']
+    }
+
+    return render(request, 'cards/catalog.html', context)
 
 
 def get_detail_card_by_id(request, card_id):
@@ -171,6 +184,13 @@ def get_detail_card_by_id(request, card_id):
     """
     # Ищем карточку по id в нашем наборе данных
     card = get_object_or_404(Card, pk=card_id)
+
+    # обновляем счетчик просмотровкарточки через F-объект
+    card.views = F('views') + 1
+    card.save()
+
+    # обновляем данные из БД 
+    card.refresh_from_db()
 
     # card.tags = '["php", "perl", "raku"]'  # Проверили что Django ORM преобразует JSON в список
 
